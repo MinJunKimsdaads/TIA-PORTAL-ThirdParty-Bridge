@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TIA Portal Openness REST API</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+<style>
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.swagger-ui .topbar { background: #1b1b1b; }
+.topbar-wrapper img {
+  content: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" rx="6" fill="%2349cc90"/><text x="20" y="27" text-anchor="middle" fill="white" font-size="20" font-weight="bold">T</text></svg>');
+}
+
+/* Warning banner */
+.notice-banner {
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+  border-bottom: 3px solid #f0ad4e;
+  padding: 16px 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.notice-banner .icon { font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+.notice-banner .content { flex: 1; }
+.notice-banner h3 { margin: 0 0 8px 0; color: #856404; font-size: 15px; }
+.notice-banner p { margin: 0; color: #664d03; font-size: 13px; line-height: 1.6; }
+.notice-banner ul { margin: 6px 0 0 0; padding-left: 18px; color: #664d03; font-size: 13px; line-height: 1.8; }
+.notice-banner code { background: rgba(0,0,0,0.08); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+
+/* DLL upload panel */
+.dll-panel {
+  background: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+  padding: 20px 24px;
+}
+.dll-panel h3 { margin: 0 0 4px 0; font-size: 15px; color: #333; }
+.dll-panel .dll-desc { margin: 0 0 12px 0; font-size: 13px; color: #666; }
+.dll-panel .status-area { margin-bottom: 12px; font-size: 13px; color: #555; }
+.dll-panel .status-item { padding: 4px 0; }
+.dll-panel .found { color: #28a745; }
+.dll-panel .missing { color: #dc3545; }
+.dll-panel .upload-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dll-panel input[type=file] { font-size: 13px; }
+.dll-panel button {
+  background: #0d6efd; color: white; border: none;
+  padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.dll-panel button:hover { background: #0b5ed7; }
+.dll-panel button:disabled { background: #6c757d; cursor: not-allowed; }
+.dll-panel .upload-result {
+  margin-top: 8px; font-size: 13px; padding: 8px 12px; border-radius: 4px;
+}
+.dll-panel .path-hint {
+  margin-top: 8px; font-size: 12px; color: #888; line-height: 1.6;
+}
+.dll-panel .path-hint code {
+  background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 3px;
+}
+</style>
+</head>
+<body>
+
+<div class="notice-banner">
+  <span class="icon">&#9888;&#65039;</span>
+  <div class="content">
+    <h3>로컬 환경 전용 API</h3>
+    <p>이 API는 <strong>TIA Portal이 설치된 로컬 PC</strong>에서만 동작합니다. 아래 조건을 모두 충족해야 합니다:</p>
+    <ul>
+      <li><strong>Siemens TIA Portal V20</strong>이 로컬 PC에 설치되어 있어야 합니다</li>
+      <li><strong>.NET Framework 4.8</strong> 런타임이 필요합니다</li>
+      <li>Windows 사용자가 <strong>'Siemens TIA Openness'</strong> 그룹에 등록되어 있어야 합니다</li>
+      <li><strong>TiaApiServer.exe</strong>를 로컬에서 실행한 후, TIA Portal을 시작하고 <code>/api/connect</code>를 호출하여 연결해야 합니다</li>
+      <li>이 문서의 <strong>"Try it out"</strong> 기능은 로컬에서 API 서버가 실행 중일 때만 동작합니다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="dll-panel">
+  <h3>Siemens Engineering DLL</h3>
+  <p class="dll-desc">API 서버 실행에 필요한 Siemens.Engineering.dll을 확인하거나 업로드합니다. TIA Portal이 설치되어 있으면 자동으로 감지됩니다.</p>
+  <div class="status-area" id="dll-status">DLL 상태 확인 중...</div>
+  <div class="upload-row">
+    <input type="file" id="dll-file" accept=".dll" />
+    <button id="dll-upload-btn" onclick="uploadDll()">업로드</button>
+  </div>
+  <div id="dll-upload-result"></div>
+  <div class="path-hint">
+    DLL 경로: <code>C:\Program Files\Siemens\Automation\Portal V20\PublicAPI\V20\Siemens.Engineering.dll</code>
+  </div>
+</div>
+
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+SwaggerUIBundle({
+  url: './openapi.json',
+  dom_id: '#swagger-ui',
+  deepLinking: true,
+  presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+  layout: 'BaseLayout',
+  defaultModelsExpandDepth: -1,
+  docExpansion: 'list',
+  tryItOutEnabled: true
+});
+
+var API_BASE = 'http://localhost:8099';
+
+function checkDllStatus() {
+  fetch(API_BASE + '/api/dll/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var html = '';
+      data.dlls.forEach(function(d) {
+        if (d.found) html += '<div class="status-item found">&#10003; ' + d.name + ' (' + d.location + ')</div>';
+        else html += '<div class="status-item missing">&#10007; ' + d.name + ' - 업로드 필요</div>';
+      });
+      if (data.ready) html = '<div class="status-item found"><strong>&#10003; 모든 DLL이 준비되었습니다</strong></div>' + html;
+      document.getElementById('dll-status').innerHTML = html;
+    })
+    .catch(function() {
+      document.getElementById('dll-status').innerHTML = '<div class="status-item missing">API 서버에 연결할 수 없습니다. 로컬에서 TiaApiServer.exe를 실행해주세요.</div>';
+    });
+}
+
+function uploadDll() {
+  var fileInput = document.getElementById('dll-file');
+  var resultDiv = document.getElementById('dll-upload-result');
+  if (!fileInput.files.length) {
+    resultDiv.innerHTML = '<div class="upload-result" style="background:#f8d7da;color:#842029">파일을 선택해주세요</div>';
+    return;
+  }
+  var file = fileInput.files[0];
+  if (!file.name.endsWith('.dll')) {
+    resultDiv.innerHTML = '<div class="upload-result" style="background:#f8d7da;color:#842029">.dll 파일만 업로드 가능합니다</div>';
+    return;
+  }
+  var btn = document.getElementById('dll-upload-btn');
+  btn.disabled = true; btn.textContent = '업로드 중...';
+  fetch(API_BASE + '/api/dll/upload?name=' + encodeURIComponent(file.name), {
+    method: 'POST',
+    body: file
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        resultDiv.innerHTML = '<div class="upload-result" style="background:#f8d7da;color:#842029">' + data.error + '</div>';
+      } else {
+        resultDiv.innerHTML = '<div class="upload-result" style="background:#d1e7dd;color:#0f5132">' + data.message + ' (' + data.size + ' bytes)</div>';
+        checkDllStatus();
+      }
+      btn.disabled = false; btn.textContent = '업로드';
+    })
+    .catch(function(e) {
+      resultDiv.innerHTML = '<div class="upload-result" style="background:#f8d7da;color:#842029">업로드 실패: ' + e.message + '</div>';
+      btn.disabled = false; btn.textContent = '업로드';
+    });
+}
+
+checkDllStatus();
+</script>
+</body>
+</html>

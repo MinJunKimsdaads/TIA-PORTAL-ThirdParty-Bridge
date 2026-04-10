@@ -1,0 +1,592 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TIA Portal Openness REST API",
+    "version": "1.0.0",
+    "description": "Siemens TIA Portal Openness (V20) 를 위한 REST API 브릿지입니다.\n\n실행 중인 TIA Portal 인스턴스에 연결하여 프로젝트 데이터를 조회하고, PLC 블록을 Import/Export 할 수 있습니다.\n\n---\n\n## 사전 요구사항\n\n| 항목 | 설명 |\n|---|---|\n| **TIA Portal V20** | 로컬 PC에 설치되어 있어야 합니다 |\n| **.NET Framework 4.8** | 런타임 필수 |\n| **Siemens TIA Openness** | Windows 그룹 'Siemens TIA Openness'에 사용자가 등록되어 있어야 합니다 |\n| **TiaApiServer.exe** | 로컬에서 실행 중이어야 합니다 (기본 포트: 8099) |\n\n## 주의사항\n\n- 이 API는 **로컬 PC에서만 동작**합니다. TIA Portal이 설치된 PC에서 TiaApiServer.exe를 실행한 뒤 `localhost:8099`로 접근해야 합니다.\n- 원격 서버에서는 사용할 수 없습니다. TIA Portal Openness API 자체가 로컬 프로세스 간 통신만 지원합니다.\n- API 서버를 먼저 실행한 후, `/api/connect`를 호출하여 TIA Portal 프로세스에 연결해야 다른 API를 사용할 수 있습니다.\n- `Try it out` 버튼은 로컬에서 TiaApiServer가 실행 중일 때만 동작합니다."
+  },
+  "servers": [{"url": "http://localhost:8099", "description": "로컬 TIA API 서버 (TIA Portal이 설치된 PC에서 실행)"}],
+  "tags": [
+    {"name": "Connection", "description": "TIA Portal 프로세스 연결 관리 - 실행 중인 TIA Portal을 탐색하고 연결합니다"},
+    {"name": "Setup", "description": "TIA Portal / 프로젝트 / 디바이스 신규 생성 - 새 TIA Portal 인스턴스를 시작하고 프로젝트와 디바이스를 생성합니다"},
+    {"name": "Project", "description": "프로젝트 및 디바이스 정보 조회 - 열려있는 프로젝트 목록과 디바이스 구성을 확인합니다"},
+    {"name": "Catalog", "description": "하드웨어 카탈로그 검색 - TIA Portal의 하드웨어 카탈로그에서 모듈을 검색하고 호환성을 확인합니다"},
+    {"name": "Device Explorer", "description": "디바이스 아이템 탐색 - 디바이스 내부의 모듈, 인터페이스, 포트 등의 트리 구조와 속성을 탐색합니다"},
+    {"name": "Drive", "description": "드라이브 설정 (Startdrive) - SINAMICS S210 등의 드라이브 오브젝트, 파라미터, 모터 설정을 조회합니다"},
+    {"name": "PLC", "description": "PLC 프로그램 조회 - PLC 블록(FB/FC/OB/DB), 데이터 타입(UDT), 태그 테이블, Software Unit을 조회합니다"},
+    {"name": "Export", "description": "PLC 프로그램 내보내기 - 블록을 소스 파일(SCL/DB/STL) 또는 XML ZIP으로 다운로드합니다. LAD/FBD 포함 모든 블록 타입을 지원합니다"},
+    {"name": "Import", "description": "PLC 프로그램 가져오기 - XML 파일 또는 ZIP을 PLC에 Import합니다. 타입 → 태그 → 블록 순서로 의존성을 고려하여 자동 처리됩니다"},
+    {"name": "HMI", "description": "HMI 태그 및 텍스트 리스트 - HMI 디바이스의 태그 테이블과 텍스트 리스트를 조회합니다"},
+    {"name": "DLL", "description": "Siemens Engineering DLL 관리 - DLL 상태 확인 및 업로드"}
+  ],
+  "paths": {
+    "/api/dll/status": {
+      "get": {
+        "tags": ["DLL"],
+        "summary": "DLL 상태 확인",
+        "description": "Siemens.Engineering.dll 등 필수 DLL의 존재 여부를 확인합니다. TIA Portal이 설치되어 있으면 자동으로 감지되며, 설치되어 있지 않은 경우 /api/dll/upload로 수동 업로드해야 합니다.",
+        "responses": {"200": {"description": "DLL 상태 정보 - 각 DLL의 존재 여부와 경로"}}
+      }
+    },
+    "/api/dll/upload": {
+      "post": {
+        "tags": ["DLL"],
+        "summary": "DLL 파일 업로드",
+        "description": "Siemens.Engineering.dll 파일을 업로드합니다. TIA Portal이 설치된 PC의 다음 경로에서 DLL을 찾을 수 있습니다:\n\n- `C:\\Program Files\\Siemens\\Automation\\Portal V20\\PublicAPI\\V20\\Siemens.Engineering.dll`\n\n업로드된 DLL은 서버의 dll/ 폴더에 저장됩니다.",
+        "parameters": [
+          {"name": "name", "in": "query", "required": true, "schema": {"type": "string"}, "description": "DLL 파일명 (예: Siemens.Engineering.dll)"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {"type": "string", "format": "binary"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "업로드 성공 - 파일명, 크기, 저장 경로 반환"},
+          "400": {"description": "파일명 누락 또는 허용되지 않는 DLL"}
+        }
+      }
+    },
+    "/api/processes": {
+      "get": {
+        "tags": ["Connection"],
+        "summary": "실행 중인 TIA Portal 프로세스 목록 조회",
+        "description": "현재 PC에서 실행 중인 모든 TIA Portal 프로세스를 검색합니다. 각 프로세스의 ID와 열려있는 프로젝트 경로를 반환합니다.\n\n**사용 시나리오:** API 서버 시작 후 가장 먼저 호출하여 연결 가능한 TIA Portal 인스턴스를 확인합니다.",
+        "responses": {
+          "200": {
+            "description": "TIA Portal 프로세스 목록",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {"type": "integer", "description": "발견된 프로세스 수"},
+                    "processes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {"type": "integer", "description": "프로세스 ID"},
+                          "projectPath": {"type": "string", "nullable": true, "description": "열려있는 프로젝트 경로 (없으면 null)"}
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "count": 1,
+                  "processes": [{"id": 12345, "projectPath": "C:\\Projects\\MyProject\\MyProject.ap20"}]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/connect": {
+      "get": {
+        "tags": ["Connection"],
+        "summary": "TIA Portal 프로세스에 연결 (Attach)",
+        "description": "지정된 TIA Portal 프로세스에 연결합니다. processId를 생략하면 첫 번째 프로세스에 자동 연결됩니다.\n\n**주의:** 이 API를 호출해야 다른 모든 API를 사용할 수 있습니다. 연결 후에는 서버가 종료될 때까지 연결이 유지됩니다.",
+        "parameters": [
+          {
+            "name": "processId",
+            "in": "query",
+            "schema": {"type": "integer"},
+            "description": "연결할 TIA Portal 프로세스 ID (생략 시 첫 번째 프로세스에 자동 연결)"
+          }
+        ],
+        "responses": {
+          "200": {"description": "연결 성공 - processId와 projectPath 반환"},
+          "404": {"description": "실행 중인 TIA Portal 프로세스를 찾을 수 없음"}
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": ["Connection"],
+        "summary": "현재 연결 상태 확인",
+        "description": "API 서버가 TIA Portal에 연결되어 있는지, 열려있는 프로젝트가 몇 개인지 확인합니다.",
+        "responses": {
+          "200": {
+            "description": "연결 상태 정보",
+            "content": {
+              "application/json": {
+                "example": {"connected": true, "projects": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portal/new": {
+      "get": {
+        "tags": ["Setup"],
+        "summary": "새 TIA Portal 인스턴스 시작",
+        "description": "새로운 TIA Portal 프로세스를 실행하고 자동으로 연결합니다. 기존 연결은 새 연결로 대체됩니다.\n\n- `WithUserInterface`: TIA Portal UI가 화면에 표시됩니다 (기본값)\n- `WithoutUserInterface`: 백그라운드에서 실행됩니다 (자동화에 적합)\n\n**주의:** TIA Portal 시작에 수십 초가 소요될 수 있습니다.",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["WithUserInterface", "WithoutUserInterface"], "default": "WithUserInterface"},
+            "description": "실행 모드 - WithUserInterface(UI 표시) 또는 WithoutUserInterface(백그라운드)"
+          }
+        ],
+        "responses": {
+          "200": {"description": "새 TIA Portal이 시작되고 연결됨"}
+        }
+      }
+    },
+    "/api/project/create": {
+      "get": {
+        "tags": ["Setup"],
+        "summary": "새 프로젝트 생성",
+        "description": "TIA Portal에 새 프로젝트를 생성합니다. 지정된 경로에 프로젝트 폴더가 생성됩니다.\n\n**예시:** `?path=C:\\Projects&name=MyNewProject`",
+        "parameters": [
+          {"name": "path", "in": "query", "required": true, "schema": {"type": "string"}, "description": "프로젝트를 저장할 디렉토리 경로 (예: C:\\Projects)"},
+          {"name": "name", "in": "query", "required": true, "schema": {"type": "string"}, "description": "생성할 프로젝트 이름"}
+        ],
+        "responses": {
+          "200": {"description": "프로젝트 생성 성공 - 프로젝트 이름과 경로 반환"},
+          "400": {"description": "path 또는 name 파라미터 누락"}
+        }
+      }
+    },
+    "/api/project/add-device": {
+      "get": {
+        "tags": ["Setup"],
+        "summary": "프로젝트에 디바이스(PLC) 추가",
+        "description": "프로젝트에 새 디바이스를 추가합니다. 기본값은 S7-1500 PLC입니다.\n\n**Order Number 예시:**\n- S7-1517: `OrderNumber:6ES7 517-3AP00-0AB0/V3.1`\n- S7-1515: `OrderNumber:6ES7 515-2AM02-0AB0/V2.9`\n- S7-1512: `OrderNumber:6ES7 512-1DK01-0AB0/V2.9`",
+        "parameters": [
+          {"name": "name", "in": "query", "schema": {"type": "string", "default": "NewDevice"}, "description": "디바이스 이름"},
+          {"name": "type", "in": "query", "schema": {"type": "string", "default": "System:Device.S71500"}, "description": "디바이스 타입 식별자"},
+          {"name": "order", "in": "query", "schema": {"type": "string", "default": "OrderNumber:6ES7 517-3AP00-0AB0/V3.1"}, "description": "주문번호 및 펌웨어 버전"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 첫 번째 프로젝트)"}
+        ],
+        "responses": {
+          "200": {"description": "디바이스 추가 성공 - PLC 소프트웨어 아이템 이름 포함"},
+          "404": {"description": "프로젝트를 찾을 수 없음"}
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "tags": ["Project"],
+        "summary": "열려있는 프로젝트 목록 조회",
+        "description": "현재 TIA Portal에서 열려있는 모든 프로젝트의 이름과 경로를 반환합니다.",
+        "responses": {
+          "200": {
+            "description": "프로젝트 목록",
+            "content": {
+              "application/json": {
+                "example": {
+                  "count": 1,
+                  "projects": [{"name": "MyProject", "path": "C:\\Projects\\MyProject"}]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices": {
+      "get": {
+        "tags": ["Project"],
+        "summary": "프로젝트의 모든 디바이스 목록 조회",
+        "description": "프로젝트에 포함된 모든 디바이스(PLC, HMI, 드라이브 등)와 그 하위 아이템을 조회합니다.\n\n반환되는 각 디바이스 아이템에는 `plcSoftware` 또는 `hmiTarget` 필드가 포함되어, 해당 아이템이 PLC인지 HMI인지 식별할 수 있습니다.\n\n**팁:** 여기서 반환된 PLC/HMI 아이템 이름을 다른 API의 `plc` 또는 `hmi` 파라미터에 사용하세요.",
+        "parameters": [
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "특정 프로젝트만 필터링 (생략 시 모든 프로젝트)"}
+        ],
+        "responses": {
+          "200": {"description": "디바이스 목록 및 하위 아이템 정보"}
+        }
+      }
+    },
+    "/api/catalog/search": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "하드웨어 카탈로그 검색",
+        "description": "TIA Portal 하드웨어 카탈로그에서 키워드로 검색합니다.\n\n**검색 예시:**\n- 모터: `q=1FK2`\n- 드라이브: `q=S210`\n- PLC: `q=6ES7 517`\n- IO 모듈: `q=6ES7 131`",
+        "parameters": [
+          {"name": "q", "in": "query", "required": true, "schema": {"type": "string"}, "description": "검색어 (예: 1FK2, S210, 6ES7)"}
+        ],
+        "responses": {
+          "200": {"description": "카탈로그 항목 목록 (articleNumber, typeName, description, version 포함)"}
+        }
+      }
+    },
+    "/api/catalog/compatible": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "특정 디바이스에 호환되는 모듈 검색",
+        "description": "특정 디바이스의 TypeIdentifier를 기준으로 호환 가능한 모듈을 검색합니다.\n\n**사용 예시:** S210 드라이브에 연결 가능한 1FK2 모터 목록 조회\n- `type=OrderNumber:6SL3210-5HE10-4xFx/V5.2.3/S210&q=1FK2`",
+        "parameters": [
+          {"name": "q", "in": "query", "schema": {"type": "string", "default": ""}, "description": "검색 필터 (빈 값이면 전체 호환 목록)"},
+          {"name": "type", "in": "query", "required": true, "schema": {"type": "string"}, "description": "대상 디바이스의 TypeIdentifier (예: OrderNumber:6SL3210-5HE10-4xFx/V5.2.3/S210)"}
+        ],
+        "responses": {
+          "200": {"description": "호환 가능한 카탈로그 항목 목록"}
+        }
+      }
+    },
+    "/api/device/items": {
+      "get": {
+        "tags": ["Device Explorer"],
+        "summary": "디바이스의 전체 아이템 트리 조회",
+        "description": "디바이스 내부의 모든 DeviceItem(모듈, 서브모듈, 인터페이스, 포트)을 재귀적으로 탐색합니다.\n\nSINAMICS S210 같은 드라이브의 내부 구조를 파악할 때 유용합니다.",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름 (예: S210_1)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 프로젝트에서 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "DeviceItem 트리 - name, type, classification, position, children 포함"}
+        }
+      }
+    },
+    "/api/device/item-attributes": {
+      "get": {
+        "tags": ["Device Explorer"],
+        "summary": "특정 DeviceItem의 모든 속성 읽기",
+        "description": "DeviceItem의 읽기 가능한 모든 속성(이름 + 값)을 반환합니다.\n\n슬래시(/)로 구분된 경로를 사용하여 하위 아이템을 지정합니다.\n\n**예시:** `device=S210_1&item=S210/PROFINET interface`",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름"},
+          {"name": "item", "in": "query", "required": true, "schema": {"type": "string"}, "description": "슬래시(/)로 구분된 DeviceItem 경로 (예: S210/PROFINET interface)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "속성 이름/값 쌍 목록"}
+        }
+      }
+    },
+    "/api/device/subitems": {
+      "get": {
+        "tags": ["Device Explorer"],
+        "summary": "하위 아이템 + 전체 속성 덤프 (Deep Dump)",
+        "description": "DeviceItem을 재귀적으로 탐색하면서 각 아이템의 모든 속성을 함께 반환합니다.\n\n모터 선택 데이터, 드라이브 파라미터 등을 발견할 때 유용합니다. `depth` 파라미터로 탐색 깊이를 제어하세요.",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름"},
+          {"name": "item", "in": "query", "schema": {"type": "string"}, "description": "시작 DeviceItem 경로 (생략 시 디바이스 루트부터 시작)"},
+          {"name": "depth", "in": "query", "schema": {"type": "integer", "default": 2}, "description": "최대 재귀 깊이 (기본값: 2)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "전체 속성이 포함된 DeviceItem 트리"}
+        }
+      }
+    },
+    "/api/drive/objects": {
+      "get": {
+        "tags": ["Drive"],
+        "summary": "디바이스의 DriveObject 목록 조회",
+        "description": "지정된 디바이스에서 Startdrive를 통해 접근 가능한 모든 DriveObject를 나열합니다.\n\n각 DriveObject에는 파라미터 개수가 포함됩니다.",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름 (예: S210_1)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "DriveObject 목록 (파라미터 개수 포함)"}
+        }
+      }
+    },
+    "/api/drive/parameters": {
+      "get": {
+        "tags": ["Drive"],
+        "summary": "드라이브 파라미터 읽기",
+        "description": "DriveObject에서 드라이브 파라미터를 읽습니다.\n\n**조회 방식:**\n- 기본값: 모터 관련 파라미터 (p300~p311)\n- 특정 파라미터: `param=300`\n- 범위 조회: `range=300-320`\n\n반환값에는 파라미터 값, 단위, Enum 목록(해당 시)이 포함됩니다.",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름"},
+          {"name": "do", "in": "query", "schema": {"type": "integer"}, "description": "DriveObject 번호 (기본값: 0)"},
+          {"name": "param", "in": "query", "schema": {"type": "integer"}, "description": "특정 파라미터 번호 (예: 300)"},
+          {"name": "range", "in": "query", "schema": {"type": "string"}, "description": "파라미터 범위 (예: 300-320)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "드라이브 파라미터 값, 단위, Enum 목록"}
+        }
+      }
+    },
+    "/api/drive/dump-all": {
+      "get": {
+        "tags": ["Drive"],
+        "summary": "모든 드라이브 파라미터 전체 덤프",
+        "description": "DriveObject의 모든 파라미터를 일괄 조회합니다. 파라미터 수가 많을 경우 시간이 오래 걸릴 수 있습니다.\n\n**주의:** 대용량 데이터를 반환하므로 필요한 경우에만 사용하세요.",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름"},
+          {"name": "do", "in": "query", "schema": {"type": "integer"}, "description": "DriveObject 번호 (기본값: 0)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "전체 파라미터 덤프 (JSON)"}
+        }
+      }
+    },
+    "/api/drive/motor-config": {
+      "get": {
+        "tags": ["Drive"],
+        "summary": "현재 모터 설정 조회",
+        "description": "HardwareProjection을 통해 현재 모터 설정을 조회합니다.\n\n필수(Required) 및 선택(Optional) ConfigurationEntry와 각 항목의 Enum 값 목록을 반환합니다.\n\n**사용 예시:** S210에 연결된 1FK2 모터의 현재 설정값과 변경 가능한 옵션 확인",
+        "parameters": [
+          {"name": "device", "in": "query", "required": true, "schema": {"type": "string"}, "description": "디바이스 이름"},
+          {"name": "do", "in": "query", "schema": {"type": "integer"}, "description": "DriveObject 번호 (기본값: 0)"},
+          {"name": "dds", "in": "query", "schema": {"type": "integer"}, "description": "Drive Data Set 번호 (기본값: 0)"},
+          {"name": "project", "in": "query", "schema": {"type": "string"}, "description": "프로젝트 이름 (생략 시 전체 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "모터 설정 - 필수/선택 항목과 Enum 값 목록"}
+        }
+      }
+    },
+    "/api/plc/blocks": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "PLC 블록 전체 목록 조회 (재귀)",
+        "description": "PLC의 모든 블록(OB, FB, FC, DB)을 그룹 구조를 포함하여 재귀적으로 조회합니다.\n\n각 블록의 이름, 번호, 프로그래밍 언어(LAD/FBD/SCL/STL), 타입, 그룹 경로를 반환합니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름 (예: PLC_1, SYNEX_Sample_PLC)"}
+        ],
+        "responses": {
+          "200": {"description": "블록 목록 - name, number, language, type, group 포함"}
+        }
+      }
+    },
+    "/api/plc/block-detail": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "특정 블록 상세 정보 조회",
+        "description": "특정 PLC 블록의 상세 정보를 조회합니다.\n\n블록 이름, 번호, 프로그래밍 언어, 타입, 수정일시, 인터페이스(Input/Output/InOut/Static/Temp) 등을 반환합니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "name", "in": "query", "required": true, "schema": {"type": "string"}, "description": "블록 이름 (예: Main, FB_Motor)"}
+        ],
+        "responses": {
+          "200": {"description": "블록 상세 정보"}
+        }
+      }
+    },
+    "/api/plc/types": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "PLC 데이터 타입(UDT) 전체 목록 조회",
+        "description": "PLC에 정의된 모든 사용자 정의 데이터 타입(UDT)을 조회합니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "UDT 목록"}
+        }
+      }
+    },
+    "/api/plc/tags": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "PLC 태그 테이블 전체 목록 조회",
+        "description": "PLC의 모든 태그 테이블과 각 테이블에 포함된 태그(이름, 데이터 타입, 주소, 코멘트)를 조회합니다.\n\n하위 그룹의 태그 테이블도 재귀적으로 포함됩니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "태그 테이블 목록 (태그 상세 포함)"}
+        }
+      }
+    },
+    "/api/plc/units": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "Software Unit 전체 목록 조회",
+        "description": "PLC에 생성된 모든 Software Unit을 조회합니다.\n\nSoftware Unit은 PLC 프로그램을 모듈화하여 관리하는 단위입니다. 각 Unit은 독립적인 블록, 타입, 태그를 가질 수 있습니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "Software Unit 목록 (블록/타입/태그 개수 포함)"}
+        }
+      }
+    },
+    "/api/plc/units/{unitName}/blocks": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "특정 Software Unit의 블록 목록 조회",
+        "description": "지정된 Software Unit에 포함된 모든 블록을 조회합니다.",
+        "parameters": [
+          {"name": "unitName", "in": "path", "required": true, "schema": {"type": "string"}, "description": "Software Unit 이름"},
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "해당 Unit의 블록 목록"}
+        }
+      }
+    },
+    "/api/plc/units/{unitName}/types": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "특정 Software Unit의 데이터 타입(UDT) 목록 조회",
+        "description": "지정된 Software Unit에 정의된 모든 사용자 정의 데이터 타입을 조회합니다.",
+        "parameters": [
+          {"name": "unitName", "in": "path", "required": true, "schema": {"type": "string"}, "description": "Software Unit 이름"},
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "해당 Unit의 UDT 목록"}
+        }
+      }
+    },
+    "/api/plc/units/{unitName}/tags": {
+      "get": {
+        "tags": ["PLC"],
+        "summary": "특정 Software Unit의 태그 테이블 목록 조회",
+        "description": "지정된 Software Unit에 포함된 모든 태그 테이블과 태그를 조회합니다.",
+        "parameters": [
+          {"name": "unitName", "in": "path", "required": true, "schema": {"type": "string"}, "description": "Software Unit 이름"},
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "해당 Unit의 태그 테이블 목록"}
+        }
+      }
+    },
+    "/api/plc/export/block": {
+      "get": {
+        "tags": ["Export"],
+        "summary": "단일 블록을 소스 파일로 다운로드",
+        "description": "특정 PLC 블록을 소스 코드 파일로 다운로드합니다.\n\n**지원 형식:**\n- SCL 블록 → `.scl` 파일\n- DB 블록 → `.db` 파일\n- STL 블록 → `.awl` 파일\n\n**주의:** LAD/FBD 블록은 소스 파일 형식으로 내보낼 수 없습니다. LAD/FBD 블록은 `/api/plc/export/xml`을 사용하세요.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "name", "in": "query", "required": true, "schema": {"type": "string"}, "description": "블록 이름 (예: Main, FB_Motor)"},
+          {"name": "unit", "in": "query", "schema": {"type": "string"}, "description": "Software Unit 이름 (생략 시 루트 블록에서 검색)"}
+        ],
+        "responses": {
+          "200": {"description": "소스 파일 다운로드 (.scl / .db / .awl)"}
+        }
+      }
+    },
+    "/api/plc/units/{unitName}/export": {
+      "get": {
+        "tags": ["Export"],
+        "summary": "Software Unit 전체를 ZIP으로 다운로드 (소스 파일)",
+        "description": "Software Unit의 모든 블록, 타입, 태그 테이블을 ZIP 파일로 다운로드합니다.\n\nZIP 내부 폴더 구조:\n```\nUnitName/\n  scl/        ← SCL 블록\n  db/         ← DB 블록\n  stl/        ← STL 블록\n  udt/        ← 사용자 정의 타입\n  tag_tables/ ← 태그 테이블 (XML)\n```\n\n**주의:** LAD/FBD 블록은 포함되지 않습니다. 전체 블록이 필요하면 `/api/plc/units/{unitName}/export-xml`을 사용하세요.",
+        "parameters": [
+          {"name": "unitName", "in": "path", "required": true, "schema": {"type": "string"}, "description": "Software Unit 이름"},
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "ZIP 파일 다운로드"}
+        }
+      }
+    },
+    "/api/plc/export/xml": {
+      "get": {
+        "tags": ["Export"],
+        "summary": "PLC 전체를 XML ZIP으로 다운로드 (LAD/FBD 포함)",
+        "description": "PLC의 모든 블록을 SimaticML XML 형식으로 내보냅니다. **LAD/FBD 블록을 포함한 모든 블록 타입**을 지원합니다.\n\n**Export 범위:**\n- `all` (기본값): 루트 블록 + Software Unit 전체\n- `program_blocks`: 루트 블록/타입/태그만\n- `software_units`: Software Unit만\n\n**ZIP 구조:**\n```\nPLCName/\n  program_blocks/\n    blocks/      ← OB, FB, FC, DB\n    types/       ← UDT\n    tag_tables/  ← 태그 테이블\n  software_units/\n    UnitName/\n      blocks/\n      types/\n      tag_tables/\n```\n\n이 ZIP을 `/api/plc/import/xml`로 다시 Import할 수 있습니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "root", "in": "query", "schema": {"type": "string", "enum": ["all", "program_blocks", "software_units"], "default": "all"}, "description": "Export 범위: all(전체), program_blocks(루트만), software_units(유닛만)"}
+        ],
+        "responses": {
+          "200": {"description": "ZIP 파일 다운로드 (XML 형식)"}
+        }
+      }
+    },
+    "/api/plc/units/{unitName}/export-xml": {
+      "get": {
+        "tags": ["Export"],
+        "summary": "특정 Software Unit을 XML ZIP으로 다운로드 (LAD/FBD 포함)",
+        "description": "특정 Software Unit의 모든 블록, 타입, 태그를 SimaticML XML 형식의 ZIP으로 내보냅니다.\n\nLAD/FBD를 포함한 모든 블록 타입을 지원합니다.",
+        "parameters": [
+          {"name": "unitName", "in": "path", "required": true, "schema": {"type": "string"}, "description": "Software Unit 이름"},
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"}
+        ],
+        "responses": {
+          "200": {"description": "ZIP 파일 다운로드 (XML 형식)"}
+        }
+      }
+    },
+    "/api/plc/create-unit": {
+      "get": {
+        "tags": ["Import"],
+        "summary": "새 Software Unit 생성",
+        "description": "PLC에 새로운 Software Unit을 생성합니다.\n\nSoftware Unit은 PLC 프로그램을 기능별로 모듈화하여 독립적으로 관리할 수 있게 해줍니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "name", "in": "query", "required": true, "schema": {"type": "string"}, "description": "생성할 Software Unit 이름"}
+        ],
+        "responses": {
+          "200": {"description": "Unit 생성 성공"}
+        }
+      }
+    },
+    "/api/plc/import/xml": {
+      "get": {
+        "tags": ["Import"],
+        "summary": "로컬 XML 파일 또는 ZIP을 Import",
+        "description": "로컬 파일 시스템의 XML 파일 또는 ZIP 파일을 PLC에 Import합니다.\n\n**단일 XML 파일:**\n- 블록/타입/태그 테이블을 자동 감지하여 적절한 위치에 Import합니다\n\n**ZIP 파일:**\n- `/api/plc/export/xml`로 내보낸 ZIP 구조를 인식합니다\n- Import 순서: 타입(UDT) → 태그 → 블록 (의존성 순서)\n- Software Unit이 없으면 자동 생성됩니다\n- 블록 그룹(폴더)이 없으면 자동 생성됩니다\n\n**지원하는 ZIP 폴더 구조:**\n```\nPLCName/\n  Program blocks/  또는  program_blocks/blocks/\n  PLC data types/  또는  program_blocks/types/\n  PLC tags/        또는  program_blocks/tag_tables/\n  Software units/UnitName/...\n```",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "file", "in": "query", "required": true, "schema": {"type": "string"}, "description": "로컬 파일 경로 (.xml 또는 .zip)"}
+        ],
+        "responses": {
+          "200": {"description": "Import 결과 - 파일별 성공/실패 상태"},
+          "400": {"description": "파일 경로 누락 또는 잘못된 확장자"},
+          "500": {"description": "TIA Portal Import 오류"}
+        }
+      }
+    },
+    "/api/plc/import/upload": {
+      "post": {
+        "tags": ["Import"],
+        "summary": "XML 파일 업로드를 통한 Import",
+        "description": "HTTP 요청 본문에 XML 내용을 담아 직접 업로드합니다.\n\n`target` 파라미터로 Import 대상을 지정합니다:\n- `blocks`: OB, FB, FC, DB 블록\n- `tags`: 태그 테이블\n- `types`: 사용자 정의 데이터 타입 (UDT)\n\n`unit` 파라미터를 지정하면 해당 Software Unit에 Import합니다. 생략하면 PLC 루트에 Import됩니다.\n\n**Content-Type:** `application/xml`\n\n**사용 예시:** 프로그래밍 도구나 스크립트에서 생성한 XML을 파일 저장 없이 바로 PLC에 Import할 때 유용합니다.",
+        "parameters": [
+          {"name": "plc", "in": "query", "required": true, "schema": {"type": "string"}, "description": "PLC 디바이스 아이템 이름"},
+          {"name": "target", "in": "query", "required": true, "schema": {"type": "string", "enum": ["blocks", "tags", "types"]}, "description": "Import 대상: blocks(블록), tags(태그 테이블), types(UDT)"},
+          {"name": "unit", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Software Unit 이름 (생략 시 PLC 루트에 Import)"}
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "SimaticML XML 형식의 파일 내용",
+          "content": {
+            "application/xml": {
+              "schema": {"type": "string", "format": "binary"},
+              "example": "<?xml version='1.0' encoding='utf-8'?><Document>...</Document>"
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Import 성공 - 블록 종류와 Unit 정보 반환"},
+          "400": {"description": "요청 본문이 비어있거나 필수 파라미터 누락"},
+          "404": {"description": "지정된 Software Unit을 찾을 수 없음"},
+          "500": {"description": "TIA Portal Import 오류"}
+        }
+      }
+    },
+    "/api/hmi/tags": {
+      "get": {
+        "tags": ["HMI"],
+        "summary": "HMI 태그 테이블 목록 조회",
+        "description": "HMI 디바이스의 모든 태그 테이블을 조회합니다.\n\n시스템 폴더와 사용자 폴더의 태그 테이블을 재귀적으로 탐색합니다.",
+        "parameters": [
+          {"name": "hmi", "in": "query", "required": true, "schema": {"type": "string"}, "description": "HMI 디바이스 아이템 이름 (예: HMI_1)"}
+        ],
+        "responses": {
+          "200": {"description": "HMI 태그 테이블 목록"}
+        }
+      }
+    },
+    "/api/hmi/textlists": {
+      "get": {
+        "tags": ["HMI"],
+        "summary": "HMI 텍스트 리스트 목록 조회",
+        "description": "HMI 디바이스에 정의된 모든 텍스트 리스트를 조회합니다.\n\n텍스트 리스트는 HMI 화면에서 상태값을 사용자 친화적인 텍스트로 표시할 때 사용됩니다.",
+        "parameters": [
+          {"name": "hmi", "in": "query", "required": true, "schema": {"type": "string"}, "description": "HMI 디바이스 아이템 이름 (예: HMI_1)"}
+        ],
+        "responses": {
+          "200": {"description": "HMI 텍스트 리스트 목록"}
+        }
+      }
+    }
+  }
+}
